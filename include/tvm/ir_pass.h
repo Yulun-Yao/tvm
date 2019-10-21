@@ -206,6 +206,14 @@ Stmt StorageFlatten(Stmt stmt,
                     Map<Tensor, Buffer> extern_buffer,
                     int cache_line_size,
                     bool create_bound_attribute = false);
+/*!
+ * \brief Verify if there is any argument bound to compact buffer.
+ *
+ * \param stmt The stmt to be verified.
+ * \return true if there is any buffer_bind_scope attribute found,
+ *        otherwise, false.
+ */
+bool VerifyCompactBuffer(Stmt stmt);
 
 /*!
  * \brief Remove No Op from the Stmt.
@@ -370,10 +378,17 @@ Stmt LowerStorageAccessInfo(Stmt stmt);
 Stmt DecorateDeviceScope(Stmt stmt);
 
 /*!
+ * \brief Loop invariant code motion which locates and hoists if statements.
+ * \param stmt The stmt to do if statement hoisting.
+ * \return Transformed stmt.
+ */
+Stmt HoistIfThenElse(Stmt stmt);
+
+/*!
  * \brief Make an user callable API LoweredFunc.
  *
  *  The main task of this function is to create code to :
- *   - Map the values in the api_args to of Var that is required by body.
+ *   - Map the values in the api_args to Var that is required by body.
  *   - Insert assertions to check type/value of the passed arguments.
  *
  * \param body The body of the function.

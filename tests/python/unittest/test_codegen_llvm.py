@@ -87,6 +87,7 @@ def test_llvm_lookup_intrin():
     func = tvm.ir_pass.MakeAPI(body, "ctpop", [A], 1, True)
     fcode = tvm.build(func, None, "llvm")
 
+
 def test_llvm_add_pipeline():
     nn = 1024
     n = tvm.convert(nn)
@@ -408,7 +409,7 @@ def test_llvm_div():
     """Check that the semantics of div and mod is the same as in C/C++"""
     def check_div(start, end, divisor, dtype):
         T = tvm.compute((end - start,),
-                        lambda i: tvm.expr.Cast(dtype, (start + i)) / tvm.const(divisor, dtype))
+                        lambda i: tvm.div(tvm.expr.Cast(dtype, (start + i)), tvm.const(divisor, dtype)))
         s = tvm.create_schedule([T.op])
         f = tvm.build(s, [T], "llvm")
         a = tvm.nd.empty((end - start,), dtype)
@@ -417,8 +418,9 @@ def test_llvm_div():
         tvm.testing.assert_allclose(a.asnumpy(), ref)
 
     def check_mod(start, end, divisor, dtype):
+        tmod = tvm.truncmod
         T = tvm.compute((end - start,),
-                        lambda i: tvm.expr.Cast(dtype, (start + i)) % tvm.const(divisor, dtype))
+                        lambda i: tmod(tvm.expr.Cast(dtype, (start + i)), tvm.const(divisor, dtype)))
         s = tvm.create_schedule([T.op])
         f = tvm.build(s, [T], "llvm")
         a = tvm.nd.empty((end - start,), dtype)
@@ -442,7 +444,7 @@ def test_llvm_div():
 def test_llvm_fp_math():
     def check_llvm_reciprocal(n):
         A = tvm.placeholder((n,), name='A')
-        B = tvm.compute((n,), lambda i: 1.0/(1e+37*A[i]), name='B')
+        B = tvm.compute((n,), lambda i: tvm.div(1.0,(1e+37*A[i])), name='B')
 
         s = tvm.create_schedule(B.op)
         f = tvm.build(s, [A, B], "llvm")

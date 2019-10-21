@@ -50,6 +50,20 @@ void CodeGenCUDA::AddFunction(LoweredFunc f) {
 std::string CodeGenCUDA::Finish() {
   if (enable_fp16_) {
     decl_stream << "#include <cuda_fp16.h>\n";
+    decl_stream << "__device__ half max" \
+                    "(const half a, const half b)\n"
+                    "{\n  return __hgt(__half(a), __half(b)) ? a : b;\n}\n";
+    decl_stream << "__device__ half min(const half a, const half b)\n"
+                    "{\n  return __hlt(__half(a), __half(b)) ? a : b;\n}\n";
+    decl_stream << "__device__ half operator+" \
+                    "(const volatile __half &a,  const volatile __half &b)\n"
+                    "{\n  return __hadd(a, b);\n}\n";
+    decl_stream << "__device__ half operator<=" \
+                   "(const volatile __half &a,  const volatile __half &b)\n"
+                    "{\n  return __hlt(a, b);\n}\n";
+    decl_stream << "__device__ half operator*" \
+                    "(const volatile __half &a,  const volatile __half &b)\n"
+                    "{\n  return __hmul(a, b);\n}\n";
   }
 
   if (enable_int8_) {
@@ -207,7 +221,11 @@ void CodeGenCUDA::PrintVecElemLoad(
     const std::string& vec, Type t, int i, std::ostream& os) {  // NOLINT(*)
   static const char access[] = {'x', 'y', 'z', 'w'};
   CHECK(i >= 0 && i < 4);
-  os << vec << "." << access[i];
+  if (t.is_int() && t.bits() == 8) {
+    os << "(0x000000ff & (" << vec << " >> " << i * 8 << "))";
+  } else {
+    os << vec << "." << access[i];
+  }
 }
 
 void CodeGenCUDA::PrintVecElemStore(
@@ -215,7 +233,12 @@ void CodeGenCUDA::PrintVecElemStore(
   this->PrintIndent();
   static const char access[] = {'x', 'y', 'z', 'w'};
   CHECK(i >= 0 && i < 4);
-  stream << vec << "." << access[i] << " = " << value << ";\n";
+  if (t.is_int() && t.bits() == 8) {
+    stream << vec << "=" << vec << " & ~(0x000000ff << " << i * 8 << ") | ("
+        << value << " << " << i * 8 << ");\n";
+  } else {
+    stream << vec << "." << access[i] << " = " << value << ";\n";
+  }
 }
 
 void CodeGenCUDA::PrintStorageSync(const Call* op) {

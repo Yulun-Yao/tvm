@@ -31,6 +31,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import gen_array_ops
 from tensorflow.python.ops import variables
 try:
     from tensorflow import lite as interpreter_wrapper
@@ -202,6 +203,150 @@ def test_forward_split():
     _test_split((1, 3, 5, 6), -1, 3, 'float32')
 
 #######################################################################
+# transpose
+# ---------
+
+
+def _test_forward_transpose(ishape, axes=()):
+    data = np.random.uniform(size=ishape).astype(np.float32)
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+
+        if not axes:
+            out = array_ops.transpose(in_data)
+        else:
+            out = array_ops.transpose(in_data, axes)
+
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+
+def test_forward_transpose():
+    _test_forward_transpose((2, 2))
+    _test_forward_transpose((2, 3, 4))
+    _test_forward_transpose((7, 8, 8, 10))
+    _test_forward_transpose((2, 3, 4), (1, 2, 0))
+    _test_forward_transpose((2, 3, 4), (0, 1, 2))
+    _test_forward_transpose((2, 3, 4, 5), (3, 0, 1, 2))
+    _test_forward_transpose((2, 3, 4, 5), ())
+
+#######################################################################
+# Cast
+# --------
+
+def _test_cast(data, cast_dtype):
+    """ One iteration of CAST """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = math_ops.cast(in_data, cast_dtype)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+
+def test_forward_cast():
+    """ CAST """
+    _test_cast(np.arange(6.0, dtype=np.float32).reshape((1, 6)), cast_dtype=tf.int32)
+    _test_cast(np.arange(6.0, dtype=np.float32).reshape((1, 6)), cast_dtype=tf.uint8)
+    _test_cast(np.arange(6.0, dtype=np.int32).reshape((1, 6)), cast_dtype=tf.int64)
+
+#######################################################################
+# tile
+# ---------
+
+
+def _test_forward_tile(in_shape, reps, dtype):
+    data = np.random.uniform(-5, 5, size=in_shape).astype(dtype)
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+
+        out = array_ops.tile(in_data, reps)
+
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+
+def test_forward_tile():
+    _test_forward_tile((2, ), (3, ), "int32")
+    _test_forward_tile((2, 2), (2, 3), "float32")
+
+######################################################################
+# BatchToSpaceND
+# --------------
+
+
+def _test_batch_to_space_nd(input_shape, block_shape, crops, dtype='int32'):
+    data = np.random.uniform(0, 5, size=input_shape).astype(dtype)
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=input_shape, dtype=dtype)
+
+        out = array_ops.batch_to_space_nd(in_data, block_shape, crops)
+
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+
+def test_forward_batch_to_space_nd():
+    # test cases: https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/batch-to-space-n-d
+    _test_batch_to_space_nd(
+        input_shape=[4, 1, 1, 1],
+        block_shape=[2, 2],
+        crops=[[0, 0], [0, 0]]
+    )
+
+    _test_batch_to_space_nd(
+        input_shape=[4, 1, 1, 3],
+        block_shape=[2, 2],
+        crops=[[0, 0], [0, 0]]
+    )
+
+    _test_batch_to_space_nd(
+        input_shape=[4, 2, 2, 1],
+        block_shape=[2, 2],
+        crops=[[0, 0], [0, 0]]
+    )
+
+######################################################################
+# SpaceToBatchND
+# --------------
+
+
+def _test_space_to_batch_nd(input_shape, block_shape, paddings, dtype='int32'):
+    data = np.random.uniform(0, 5, size=input_shape).astype(dtype)
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=input_shape, dtype=dtype)
+
+        out = array_ops.space_to_batch_nd(in_data, block_shape, paddings)
+
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+
+def test_forward_space_to_batch_nd():
+    # test cases: https://www.tensorflow.org/api_docs/python/tf/space_to_batch_nd
+    _test_space_to_batch_nd(
+        input_shape=[1, 2, 2, 1],
+        block_shape=[2, 2],
+        paddings=[[0, 0], [0, 0]]
+    )
+
+    _test_space_to_batch_nd(
+        input_shape=[1, 2, 2, 3],
+        block_shape=[2, 2],
+        paddings=[[0, 0], [0, 0]]
+    )
+
+    _test_space_to_batch_nd(
+        input_shape=[1, 4, 4, 1],
+        block_shape=[2, 2],
+        paddings=[[0, 0], [0, 0]]
+    )
+
+    _test_space_to_batch_nd(
+        input_shape=[2, 2, 4, 1],
+        block_shape=[2, 2],
+        paddings=[[0, 0], [2, 0]]
+    )
+
+#######################################################################
 # Pooling
 # -------
 def _test_pooling_iteration(input_shape, **kwargs):
@@ -307,6 +452,7 @@ def test_forward_convolution():
     _test_convolution([4, 17, 17, 19], [3, 3, 19, 1], [1, 1], [2, 2], 'VALID', 'NHWC', True)
     _test_convolution([4, 17, 17, 124], [1, 1, 124, 1], [1, 1], [1, 1], 'SAME', 'NHWC', True)
     _test_convolution([4, 17, 17, 12], [3, 3, 12, 1], [1, 1], [2, 2], 'VALID', 'NHWC', True)
+    _test_convolution([4, 17, 17, 12], [3, 3, 12, 2], [1, 1], [2, 2], 'VALID', 'NHWC', True)
 
 
 #######################################################################
@@ -470,6 +616,13 @@ def _test_maximum(data):
 def _test_minimum(data):
     """ One iteration of minimum """
     return _test_elemwise(math_ops.minimum, data)
+#######################################################################
+# Greater
+# -------
+
+def _test_greater(data):
+    """ One iteration of greater """
+    return _test_elemwise(math_ops.greater, data)
 
 def _test_forward_elemwise(testop):
     """ Elewise"""
@@ -496,6 +649,22 @@ def test_all_elemwise():
     _test_forward_elemwise(_test_pow)
     _test_forward_elemwise(_test_maximum)
     _test_forward_elemwise(_test_minimum)
+    _test_forward_elemwise(_test_greater)
+
+#######################################################################
+# Zeros like
+# --------
+
+def _test_zeros_like(data):
+    """ One iteration of ZEROS LIKE """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = gen_array_ops.zeros_like(in_data)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_zeros_like():
+    """ ZEROS LIKE """
+    _test_zeros_like(np.arange(6.0, dtype=np.float32).reshape((1, 6)))
 
 #######################################################################
 # Reduce
@@ -686,6 +855,35 @@ def test_forward_softmax():
     """ Softmax """
     _test_softmax(np.arange(6.0, dtype=np.float32).reshape((1, 6)))
 
+#######################################################################
+# Tanh
+# --------
+
+def _test_tanh(data):
+    """ One iteration of TANH """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = math_ops.sigmoid(in_data)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_tanh():
+    """ TANH """
+    _test_tanh(np.arange(6.0, dtype=np.float32).reshape((1, 6)))
+
+#######################################################################
+# ReLu
+# --------
+
+def _test_relu(data):
+    """ One iteration of ReLU """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = nn_ops.relu(in_data)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_relu():
+    """ ReLU """
+    _test_relu(np.arange(6.0, dtype=np.float32).reshape((1, 6)))
 
 #######################################################################
 # Fully Connected
@@ -799,6 +997,66 @@ def test_forward_inception_v4_net():
     tvm.testing.assert_allclose(np.squeeze(tvm_output[0]), np.squeeze(tflite_output[0]),
                                 rtol=1e-5, atol=1e-5)
 
+def test_forward_qnn_inception_v1_net():
+    """Test the Quantized TFLite Inception model."""
+    # InceptionV1
+    tflite_model_file = tf_testing.get_workload_official(
+        "https://storage.googleapis.com/download.tensorflow.org/models/inception_v1_224_quant_20181026.tgz",
+        "inception_v1_224_quant.tflite")
+    with open(tflite_model_file, "rb") as f:
+        tflite_model_buf = f.read()
+    # Checking the labels because the requantize implementation is different between TFLite and
+    # Relay. This cause final output numbers to mismatch. So, testing accuracy via labels.
+    np.random.seed(0)
+    data = np.random.random_integers(low=0, high=128, size=(1, 224, 224, 3)).astype('uint8')
+    tflite_output = run_tflite_graph(tflite_model_buf, data)
+    tflite_predictions = np.squeeze(tflite_output)
+    tflite_sorted_labels = tflite_predictions.argsort()[-3:][::-1]
+    tvm_output = run_tvm_graph(tflite_model_buf, data, 'input')
+    tvm_predictions = np.squeeze(tvm_output)
+    tvm_sorted_labels = tvm_predictions.argsort()[-3:][::-1]
+    tvm.testing.assert_allclose(tvm_sorted_labels, tflite_sorted_labels)
+
+def test_forward_qnn_mobilenet_v1_net():
+    """Test the Quantized TFLite Mobilenet V1 model."""
+    # MobilenetV1
+    tflite_model_file = tf_testing.get_workload_official(
+        "https://storage.googleapis.com/download.tensorflow.org/models/mobilenet_v1_2018_08_02/mobilenet_v1_1.0_224_quant.tgz",
+        "mobilenet_v1_1.0_224_quant.tflite")
+    with open(tflite_model_file, "rb") as f:
+        tflite_model_buf = f.read()
+    # Checking the labels because the requantize implementation is different between TFLite and
+    # Relay. This cause final output numbers to mismatch. So, testing accuracy via labels.
+    np.random.seed(0)
+    data = np.random.random_integers(low=0, high=128, size=(1, 224, 224, 3)).astype('uint8')
+    tflite_output = run_tflite_graph(tflite_model_buf, data)
+    tflite_predictions = np.squeeze(tflite_output)
+    tflite_sorted_labels = tflite_predictions.argsort()[-3:][::-1]
+    tvm_output = run_tvm_graph(tflite_model_buf, data, 'input')
+    tvm_predictions = np.squeeze(tvm_output)
+    tvm_sorted_labels = tvm_predictions.argsort()[-3:][::-1]
+    tvm.testing.assert_allclose(tvm_sorted_labels, tflite_sorted_labels)
+
+def test_forward_qnn_mobilenet_v2_net():
+    """Test the Quantized TFLite Mobilenet V2 model."""
+    # MobilenetV2
+    tflite_model_file = tf_testing.get_workload_official(
+        "https://storage.googleapis.com/download.tensorflow.org/models/tflite_11_05_08/mobilenet_v2_1.0_224_quant.tgz",
+        "mobilenet_v2_1.0_224_quant.tflite")
+    with open(tflite_model_file, "rb") as f:
+        tflite_model_buf = f.read()
+    # Checking the labels because the requantize implementation is different between TFLite and
+    # Relay. This cause final output numbers to mismatch. So, testing accuracy via labels.
+    np.random.seed(0)
+    data = np.random.random_integers(low=0, high=128, size=(1, 224, 224, 3)).astype('uint8')
+    tflite_output = run_tflite_graph(tflite_model_buf, data)
+    tflite_predictions = np.squeeze(tflite_output)
+    tflite_sorted_labels = tflite_predictions.argsort()[-3:][::-1]
+    tvm_output = run_tvm_graph(tflite_model_buf, data, 'input')
+    tvm_predictions = np.squeeze(tvm_output)
+    tvm_sorted_labels = tvm_predictions.argsort()[-3:][::-1]
+    tvm.testing.assert_allclose(tvm_sorted_labels, tflite_sorted_labels)
+
 #######################################################################
 # SSD Mobilenet
 # -------------
@@ -821,8 +1079,24 @@ def test_forward_ssd_mobilenet_v1():
 # Main
 # ----
 if __name__ == '__main__':
+    # BatchToSpaceND
+    test_forward_batch_to_space_nd()
+
+    # SpaceToBatchND
+    test_forward_space_to_batch_nd()
+
     # Split
     test_forward_split()
+
+    # Transpose
+    test_forward_transpose()
+
+    # Cast
+    test_forward_cast()
+
+    # Tile
+    test_forward_tile()
+
     # Transforms
     test_forward_concatenation()
     test_forward_pad()
@@ -836,10 +1110,15 @@ if __name__ == '__main__':
     test_forward_logistic()
     test_forward_pooling()
     test_forward_softmax()
+    test_forward_tanh()
+    test_forward_relu()
     test_forward_fully_connected()
 
     # Elemwise
     test_all_elemwise()
+
+    # Zeros Like
+    test_forward_zeros_like()
 
     # Reduce
     test_all_reduce()
@@ -850,3 +1129,8 @@ if __name__ == '__main__':
     test_forward_inception_v3_net()
     test_forward_inception_v4_net()
     test_forward_ssd_mobilenet_v1()
+
+    # End to End quantized
+    test_forward_qnn_inception_v1_net()
+    test_forward_qnn_mobilenet_v1_net()
+    test_forward_qnn_mobilenet_v2_net()

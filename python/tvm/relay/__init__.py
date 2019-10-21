@@ -17,6 +17,8 @@
 # pylint: disable=wildcard-import, redefined-builtin, invalid-name
 """The Relay IR namespace containing the IR definition and compiler."""
 from __future__ import absolute_import
+import os
+from sys import setrecursionlimit
 from ..api import register_func
 from . import base
 from . import ty
@@ -34,8 +36,7 @@ from . import debug
 from . import param_dict
 from . import feature
 from .backend import vm
-from .backend import serializer
-from .backend import deserializer
+from .backend import profiler_vm
 from .backend import vmobj
 
 # Root operators
@@ -53,7 +54,13 @@ from . import frontend
 from . import backend
 from . import quantize
 
+# Dialects
+from . import qnn
+
 from .scope_builder import ScopeBuilder
+
+# Required to traverse large programs
+setrecursionlimit(10000)
 
 # Span
 Span = base.Span
@@ -97,6 +104,7 @@ RefWrite = expr.RefWrite
 PatternWildcard = adt.PatternWildcard
 PatternVar = adt.PatternVar
 PatternConstructor = adt.PatternConstructor
+PatternTuple = adt.PatternTuple
 Constructor = adt.Constructor
 TypeData = adt.TypeData
 Clause = adt.Clause

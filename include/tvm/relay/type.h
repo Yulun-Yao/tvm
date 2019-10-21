@@ -58,7 +58,7 @@ class TypeNode : public RelayNode {
 class Type : public NodeRef {
  public:
   Type() {}
-  explicit Type(NodePtr<tvm::Node> p) : NodeRef(p) {}
+  explicit Type(ObjectPtr<tvm::Object> p) : NodeRef(p) {}
 
   using ContainerType = TypeNode;
 };
@@ -410,6 +410,12 @@ class TypeReporterNode : public Node {
    */
   TVM_DLL virtual void SetLocation(const NodeRef& ref) = 0;
 
+  /*!
+   * \brief Retrieve the current global module.
+   * \return The global module.
+   */
+  TVM_DLL virtual Module GetModule() = 0;
+
   // solver is not serializable.
   void VisitAttrs(tvm::AttrVisitor* v) final {}
 
@@ -424,10 +430,11 @@ class TypeReporterNode : public Node {
 class TypeReporter : public NodeRef {
  public:
   TypeReporter() {}
-  explicit TypeReporter(::tvm::NodePtr<::tvm::Node> n) : NodeRef(n) {
+  explicit TypeReporter(::tvm::ObjectPtr<::tvm::Object> n) : NodeRef(n) {
   }
   TypeReporterNode* operator->() const {
-    return static_cast<TypeReporterNode*>(node_.get());
+    return const_cast<TypeReporterNode*>(
+        static_cast<const TypeReporterNode*>(get()));
   }
   using ContainerType = TypeReporterNode;
 };

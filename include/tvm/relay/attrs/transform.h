@@ -298,6 +298,28 @@ struct NdarraySizeAttrs : public tvm::AttrsNode<NdarraySizeAttrs> {
   }
 };
 
+/*! \brief Attributes used in one-hot operator */
+struct OneHotAttrs : public tvm::AttrsNode<OneHotAttrs> {
+  int depth;
+  int axis;
+  DataType dtype;
+
+  TVM_DECLARE_ATTRS(OneHotAttrs, "relay.attrs.OneHotAttrs") {
+    TVM_ATTR_FIELD(depth).set_default(1)
+        .describe("Depth of the one hot dimension.");
+    TVM_ATTR_FIELD(axis).set_default(-1)
+        .describe("Axis to fill.");
+    TVM_ATTR_FIELD(dtype).set_default(NullValue<DataType>())
+        .describe("Output data type.");
+  }
+};  // struct OneHotAttrs
+
+/*! \brief Attributes for ArgWhere operator */
+struct ArgWhereAttrs : public tvm::AttrsNode<ArgWhereAttrs> {
+  TVM_DECLARE_ATTRS(ArgWhereAttrs, "relay.attrs.ArgWhereAttrs") {
+  }
+};  // struct ArgWhereAttrs
+
 }  // namespace relay
 }  // namespace tvm
 #endif  // TVM_RELAY_ATTRS_TRANSFORM_H_

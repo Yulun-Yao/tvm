@@ -556,6 +556,9 @@ class Call : public ExprNode {
          name == intrin_name);
   }
 
+  /*! \return Whether call node can be vectorized. */
+  bool is_vectorizable() const;
+
   static constexpr const char* _type_key = "Call";
   TVM_DECLARE_NODE_TYPE_INFO(Call, ExprNode);
 
@@ -571,6 +574,10 @@ class Call : public ExprNode {
   static constexpr const char* likely = "likely";
   static constexpr const char* glsl_texture_store = "glsl_texture_store";
   static constexpr const char* prefetch = "prefetch";
+  static constexpr const char* isnan = "isnan";
+
+  /*! \brief Vectorizable intrinsic list. */
+  static const char* vectorizable_intrinsics[];
 };
 
 /*!
@@ -657,10 +664,10 @@ class CommReducerNode : public Node {
 };
 
 inline const CommReducerNode* CommReducer::get() const {
-  return static_cast<CommReducerNode*>(node_.get());
+  return static_cast<const CommReducerNode*>(data_.get());
 }
 inline const CommReducerNode* CommReducer::operator->() const {
-  return static_cast<CommReducerNode*>(node_.get());
+  return get();
 }
 
 /*! \brief Reduction operator operator */
@@ -704,6 +711,10 @@ class Reduce : public ExprNode {
 class Any : public ExprNode {
  public:
   void VisitAttrs(AttrVisitor* v) final {}
+  /*! \brief Convert to var. */
+  Var ToVar() const {
+    return Variable::make(Int(32), "any_dim");
+  }
 
   TVM_DLL static Expr make();
 
@@ -1565,7 +1576,7 @@ namespace std {
 template <>
 struct hash<::tvm::ir::TensorKey> {
   std::size_t operator()(const ::tvm::ir::TensorKey& k) const {
-    size_t lhs = k.f.hash();
+    size_t lhs = ::tvm::NodeHash()(k.f);
     size_t rhs = static_cast<size_t>(k.value_index);
     lhs ^= rhs + 0x9e3779b9 + (lhs << 6) + (lhs >> 2);
     return lhs;

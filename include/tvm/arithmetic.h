@@ -245,6 +245,8 @@ class RewriteSimplifier {
               const Expr& new_expr,
               bool override = false);
 
+  std::function<void()> EnterConstraint(const Expr& constraint);
+
  private:
   friend class Analyzer;
   friend class ConstraintContext;
@@ -360,7 +362,7 @@ class IntSet : public NodeRef {
   /*! \brief constructor */
   IntSet() {}
   // constructor from not container.
-  explicit IntSet(NodePtr<Node> n) : NodeRef(n) {}
+  explicit IntSet(ObjectPtr<Object> n) : NodeRef(n) {}
   /*!
    * \brief access the internal node container
    * \return the pointer to the internal node container
@@ -471,6 +473,11 @@ class IntSetAnalyzer {
  */
 class Analyzer {
  public:
+  /*
+   * Disable copy constructor.
+   */
+  Analyzer(const Analyzer&) = delete;
+  Analyzer& operator=(const Analyzer&) = delete;
   /*! \brief sub-analyzer: const integer bound */
   ConstIntBoundAnalyzer const_int_bound;
   /*! \brief sub-analyzer: modular set */
@@ -685,7 +692,7 @@ Array<Expr> DetectClipBound(const Expr& e,
 
 // implementation
 inline const IntSetNode* IntSet::operator->() const {
-  return static_cast<const IntSetNode*>(node_.get());
+  return static_cast<const IntSetNode*>(get());
 }
 }  // namespace arith
 }  // namespace tvm

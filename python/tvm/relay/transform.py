@@ -32,7 +32,7 @@ from .. import nd as _nd
 
 @register_relay_node
 class PassInfo(RelayNode):
-    """The class that contains the meta data required by a pass. It is the
+    """The class contains the meta data required by a pass. It is the
     container of information needed by running an optimization or analysis.
     This class can be extended by adding new members when more meta data is
     needed.
@@ -132,11 +132,13 @@ def build_config(opt_level=2,
                 "SimplifyInference": 0,
                 "OpFusion": 1,
                 "FoldConstant": 2,
-                "CombineParallelConv2D": 3,
                 "FoldScaleAxis": 3,
                 "AlterOpLayout": 3,
                 "CanonicalizeOps": 3,
+                "CanonicalizeCast": 3,
                 "EliminateCommonSubexpr": 3,
+                "CombineParallelConv2D": 4,
+                "CombineParallelDense": 4
             }
 
     fallback_device : int, str, or tvm.TVMContext, optional
@@ -250,30 +252,6 @@ class Sequential(Pass):
                                             passes, opt_level, name, required)
 
 
-def infer_type(expr, mod=None):
-    """Infer the type of an expr.
-    Adding Function into a Module will change it's binding,
-    and some passes need type inference to work without binding modification.
-    However, InferType() work by putting stuff into a Module, thus changing all the binding.
-
-    This is an escape patch that allow type inference without binding changing.
-
-    Parameters
-    ----------
-    expr : tvm.relay.Expr
-        The input expression.
-
-    mod : Optional[tvm.relay.Module]
-        The input module
-
-    Returns
-    -------
-    ret : tvm.relay.Expr
-        The output expression.
-    """
-    return _transform.infer_type(expr, mod)
-
-
 def InferType():
     """Infer the type of an expr.
 
@@ -297,7 +275,7 @@ def FoldScaleAxis():
     Note
     ----
     Internally, we will call backward_fold_scale_axis before using
-    forward_fold_scale_axis. As backward folding targets common conv-bn
+    forward_fold_scale_axis as backward folding targets the common conv->bn
     pattern.
     """
     return _transform.FoldScaleAxis()
@@ -314,8 +292,8 @@ def BackwardFoldScaleAxis():
     Note
     ----
     It is recommended to call backward_fold_scale_axis
-    before using forward_fold_scale_axis.
-    As backward folding targets common conv-bn pattern.
+    before using forward_fold_scale_axis as backward folding targets the common
+    conv->bn pattern.
     """
     return _transform.BackwardFoldScaleAxis()
 
@@ -331,8 +309,8 @@ def ForwardFoldScaleAxis():
     Note
     ----
     It is recommended to call backward_fold_scale_axis
-    before using forward_fold_scale_axis.
-    As backward folding targets common conv-bn pattern.
+    before using forward_fold_scale_axis, as backward folding targets the
+    common conv->bn pattern.
     """
     return _transform.ForwardFoldScaleAxis()
 
@@ -350,9 +328,9 @@ def SimplifyInference():
 
 
 def CanonicalizeOps():
-    """ Canonicalize special operators to basic operators.
-    This can simplify followed analysis. (e.g. expanding bias_add to
-    expand_dims and broadcast_add.)
+    """Canonicalize special operators to basic operators.
+    This can simplify followed analysis, e.g. expanding bias_add to
+    expand_dims and broadcast_add.
 
     Returns
     -------
@@ -363,7 +341,7 @@ def CanonicalizeOps():
 
 
 def DeadCodeElimination(inline_once=False):
-    """Remove expressions which does not effect the program result (dead code).
+    """Remove expressions that do not have any users (dead code).
 
     Parameters
     ----------
@@ -379,7 +357,7 @@ def DeadCodeElimination(inline_once=False):
 
 
 def FoldConstant():
-    """Fold the constant expression in expr.
+    """Fold the constant expressions in a Relay program.
 
     Returns
     -------
@@ -423,6 +401,35 @@ def CombineParallelConv2D(min_num_branches=3):
     return _transform.CombineParallelConv2D(min_num_branches)
 
 
+def CombineParallelDense(min_num_branches=3):
+    """Combine multiple dense operators into one. For example:
+
+                data
+          /              \
+     dense (2,2)         dense (2,2)
+         |                 |
+    elemwise/bcast (2,2)  elemwise/bcast (2,2)
+
+    Would become:
+
+             data
+              |
+        batch_matmul+elemwise/bcast (2,2,2)
+
+    Parameters
+    ----------
+    min_num_branches : int
+        The minimum number of required parallel branches for performing this
+        optimization.
+
+    Returns
+    -------
+    ret: tvm.relay.Pass
+        The registered pass that combines parallel dense operators.
+    """
+    return _transform.CombineParallelDense(min_num_branches)
+
+
 def AlterOpLayout():
     """Alternate the layouts of operators or replace primitive operators with
     other expressions.
@@ -437,19 +444,24 @@ def AlterOpLayout():
     return _transform.AlterOpLayout()
 
 
-def Legalize():
+def Legalize(legalize_map_attr_name="FTVMLegalize"):
     """Legalizes an expression with another expression.
     This pass can be used to replace an expr with another expr for target
     dependent optimizations. For example, one expr, though semnatically
     equivalent to the other, can have better performance on a target. This pass
     can be used to legalize the expr in a target-dependent manner.
 
+    Parameters
+    ----------
+    legalize_map_attr_name : str
+        The Op's attr name which corresponds to the legalize rule function.
+
     Returns
     -------
     ret : tvm.relay.Pass
         The registered pass that rewrites an expr.
     """
-    return _transform.Legalize()
+    return _transform.Legalize(legalize_map_attr_name)
 
 
 def RewriteAnnotatedOps(fallback_device):
@@ -513,7 +525,7 @@ def EtaExpand():
 
 
 def ToGraphNormalForm():
-    """Turn A Normal Form expression into Graph Normal Form expression
+    """Turn a Relay program in A Normal Form into Graph Normal Form
 
     Returns
     -------

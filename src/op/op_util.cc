@@ -69,11 +69,14 @@ MakeLoopNest(const Stage& stage,
 
     // initialize the offset and loop_level
     Var var = bind_iv->var;
-    if (new_loop_var) {
-      var = Var(iv->var->name_hint + ".init", bind_iv->var.type());
-    }
+
     // Mark the iter var in the IR, to remember the point
     if (bind_iv->thread_tag.length() == 0) {
+      // Only generate new loop if we're not bound to a thread.
+      if (new_loop_var) {
+        var = Var(iv->var->name_hint + ".init", bind_iv->var.type());
+      }
+
       ForType for_type = ForType::Serial;
       IterVarAttr it_attr;
       if (stage->iter_var_attrs.count(iv)) {
@@ -190,7 +193,7 @@ class TensorReplacer : public ir::IRMutator {
 
   Expr Mutate_(const ir::Call* op, const Expr& e) {
     if (op->call_type == ir::Call::Halide) {
-      Tensor t = Operation(op->func.node_).output(op->value_index);
+      Tensor t = Downcast<Operation>(op->func).output(op->value_index);
       auto it = vmap_.find(t);
       if (it != vmap_.end()) {
         Expr ret = ir::Call::make(

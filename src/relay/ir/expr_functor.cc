@@ -18,8 +18,7 @@
  */
 
 /*!
- *  Copyright (c) 2019 by Contributors
- * \file src/tvm/relay/expr_mutator.cc
+ * \file src/tvm/relay/expr_functor.cc
  * \brief A wrapper around ExprFunctor which functionally updates the AST.
  *
  * ExprMutator uses memoization and self return in order to amortize
@@ -216,7 +215,8 @@ Expr ExprMutator::VisitExpr_(const MatchNode* m) {
 }
 
 Clause ExprMutator::VisitClause(const Clause& c) {
-  return ClauseNode::make(VisitPattern(c->lhs), VisitExpr(c->rhs));
+  Pattern p = VisitPattern(c->lhs);
+  return ClauseNode::make(p, VisitExpr(c->rhs));
 }
 
 Pattern ExprMutator::VisitPattern(const Pattern& p) { return p; }
@@ -395,7 +395,9 @@ class ExprBinder : public ExprMutator, PatternMutator {
   }
 
   Var VisitVar(const Var& v) final {
-    return Downcast<Var>(VisitExpr(v));
+    CHECK(!args_map_.count(v))
+      << "Cannnot bind an internal pattern variable";
+    return v;
   }
 
  private:
@@ -441,14 +443,13 @@ Expr Bind(const Expr& expr, const tvm::Map<Var, Expr>& args_map) {
   }
 }
 
-
 TVM_REGISTER_API("relay._expr.Bind")
 .set_body([](TVMArgs args, TVMRetValue* ret) {
     NodeRef input = args[0];
-    if (input->derived_from<ExprNode>()) {
+    if (input->IsInstance<ExprNode>()) {
       *ret = Bind(Downcast<Expr>(input), args[1]);
     } else {
-      CHECK(input->derived_from<TypeNode>());
+      CHECK(input->IsInstance<TypeNode>());
       *ret = Bind(Downcast<Type>(input), args[1]);
     }
   });

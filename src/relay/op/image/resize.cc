@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -25,8 +25,6 @@
 #include <tvm/data_layout.h>
 #include <tvm/relay/op.h>
 #include <tvm/relay/attrs/image.h>
-#include <topi/elemwise.h>
-#include <topi/image/resize.h>
 #include "../op_common.h"
 
 namespace tvm {
@@ -56,35 +54,16 @@ bool ResizeRel(const Array<Type>& types,
   oshape.Set(2, param->size[0]);
   oshape.Set(3, param->size[1]);
 
+  DataType out_dtype = param->out_dtype;
+  if (out_dtype.bits() == 0) {
+    out_dtype = data->dtype;
+  }
+
   // assign output type
   reporter->Assign(types[1],
                    TensorTypeNode::make(layout_converter.BackwardShape(oshape),
-                                        data->dtype));
+                                        out_dtype));
   return true;
-}
-
-Array<Tensor> ResizeCompute(const Attrs& attrs,
-                            const Array<Tensor>& inputs,
-                            const Type& out_type,
-                            const Target& target) {
-  const auto* param = attrs.as<ResizeAttrs>();
-  CHECK(param != nullptr);
-  CHECK(param->layout == "NCHW" || param->layout == "NHWC");
-  const auto* out_ttype = out_type.as<TensorTypeNode>();
-  CHECK(out_ttype != nullptr);
-  Array<IndexExpr> oshape;
-  if (param->layout == "NCHW") {
-    oshape.push_back(out_ttype->shape[2]);
-    oshape.push_back(out_ttype->shape[3]);
-  } else if (param->layout == "NHWC") {
-    oshape.push_back(out_ttype->shape[1]);
-    oshape.push_back(out_ttype->shape[2]);
-  }
-  return Array<Tensor>{ topi::image::resize(inputs[0],
-                                            oshape,
-                                            param->layout,
-                                            param->align_corners,
-                                            param->method) };
 }
 
 // Positional relay function to create image operator
@@ -93,12 +72,14 @@ Expr MakeResize(Expr data,
                 Array<IndexExpr> size,
                 std::string layout,
                 std::string method,
-                bool align_corners) {
+                bool align_corners,
+                DataType out_dtype) {
   auto attrs = make_node<ResizeAttrs>();
   attrs->size = std::move(size);
   attrs->layout = std::move(layout);
   attrs->method = std::move(method);
   attrs->align_corners = align_corners;
+  attrs->out_dtype = out_dtype;
   static const Op& op = Op::Get("image.resize");
   return CallNode::make(op, {data}, Attrs(attrs), {});
 }
@@ -122,12 +103,11 @@ RELAY_REGISTER_OP("image.resize")
            for layout NHWC
            (batch_size, size[0], size[1], channels)
 )code" TVM_ADD_FILELINE)
-.set_attrs_type_key("relay.attrs.ResizeAttrs")
+.set_attrs_type<ResizeAttrs>()
 .set_num_inputs(1)
 .add_argument("data", "Tensor", "The input tensor.")
 .set_support_level(5)
 .add_type_rel("Resize", ResizeRel)
-.set_attr<FTVMCompute>("FTVMCompute", ResizeCompute)
 .set_attr<TOpPattern>("TOpPattern", kInjective);
 
 }  // namespace relay

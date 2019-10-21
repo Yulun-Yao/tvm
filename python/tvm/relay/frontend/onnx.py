@@ -176,6 +176,15 @@ class BatchNorm(OnnxOpConverter):
         return out[0]
 
 
+class InstanceNorm(OnnxOpConverter):
+    """ Operator converter for BatchNorm.
+    """
+
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        return AttrCvt(op_name='instance_norm')(inputs, attr, params)
+
+
 class Conv(OnnxOpConverter):
     """ Operator converter for Conv.
     """
@@ -222,6 +231,8 @@ class ConvTranspose(OnnxOpConverter):
 
 
 class Div(Elemwise):
+    """ Operator converter for Divide.
+    """
     name = 'divide'
 
 
@@ -307,6 +318,8 @@ class MaxPool(Pool):
             custom_check=dimension_constraint())(inputs, attr, params)
 
 class Mul(Elemwise):
+    """ Operator converter for Multiply.
+    """
     name = 'multiply'
 
 
@@ -322,15 +335,20 @@ class Pad(OnnxOpConverter):
         for i in range(dims):
             pad_width.append((pads[i], pads[i+dims]))
         attr['pad_width'] = pad_width
+        pad_mode = attr.get('mode', 'constant').decode('utf-8')
+        if pad_mode in ['constant', 'edge', 'reflect']:
+            attr['pad_mode'] = pad_mode
+            attr.pop('mode', None)
+        else:
+            raise tvm.error.OpAttributeInvalid(
+                'Value ' + pad_mode + ' in attribute "mode" is invalid for operator Pad.')
 
         return AttrCvt(
             _op.nn.pad,
             transforms={
                 'value': 'pad_value',
             },
-            ignores=['mode'],
-            custom_check=(lambda attrs: attrs.get('mode', 'constant').decode("utf-8") == 'constant',
-                          'split mode != constant'))(inputs, attr, params)
+            )(inputs, attr, params)
 
     @classmethod
     def _impl_v2(cls, inputs, attr, params):
@@ -340,15 +358,20 @@ class Pad(OnnxOpConverter):
         for i in range(dims):
             pad_width.append((pads[i], pads[i+dims]))
         attr['pad_width'] = pad_width
+        pad_mode = attr.get('mode', 'constant').decode('utf-8')
+        if pad_mode in ['constant', 'edge', 'reflect']:
+            attr['pad_mode'] = pad_mode
+            attr.pop('mode', None)
+        else:
+            raise tvm.error.OpAttributeInvalid(
+                'Value ' + pad_mode + ' in attribute "mode" is invalid for operator Pad.')
 
         return AttrCvt(
             'pad',
             transforms={
                 'value': 'pad_value',
             },
-            ignores=['mode'],
-            custom_check=(lambda attrs: attrs.get('mode', 'constant').decode("utf-8") == 'constant',
-                          'split mode != constant'))(inputs, attr, params)
+            )(inputs, attr, params)
 
 
 class ParametricSoftPlus(OnnxOpConverter):
@@ -495,6 +518,8 @@ class Softsign(OnnxOpConverter):
 
 
 class Sub(Elemwise):
+    """ Operator converter for Subtract.
+    """
     name = 'subtract'
 
 
@@ -559,13 +584,13 @@ class Upsample(OnnxOpConverter):
         assert len(scales) == 4 and scales[0] == 1.0 and scales[1] == 1.0 and scales[2] == scales[3]
         mode = attr.get('mode')
         if mode == b'nearest':
-            method = "NEAREST_NEIGHBOR"
+            method = "nearest_neighbor"
         elif mode == b'linear':
-            method = "BILINEAR"
+            method = "bilinear"
         else:
             raise tvm.error.OpAttributeInvalid(
                 'Value {} in attribute "mode" of operator Upsample is not valid.'.format(mode))
-        attr = {'scale':int(scales[-1]), 'method':method, 'layout':'NCHW'}
+        attr = {'scale':int(scales[-1]), 'method':method, 'layout':'NCHW', 'align_corners':True}
         return AttrCvt('upsampling')(inputs, attr)
 
 
@@ -768,27 +793,27 @@ class Reduce(OnnxOpConverter):
         return AttrCvt(cls.name)(inputs, attr)
 
 class ReduceMax(Reduce):
-    """ Operator converter for ArgMax.
+    """ Operator converter for ReduceMax.
     """
     name = 'max'
 
 class ReduceMin(Reduce):
-    """ Operator converter for ArgMax.
+    """ Operator converter for ReduceMin.
     """
     name = 'min'
 
 class ReduceSum(Reduce):
-    """ Operator converter for ArgMax.
+    """ Operator converter for ReduceSum.
     """
     name = 'sum'
 
 class ReduceMean(Reduce):
-    """ Operator converter for ArgMax.
+    """ Operator converter for ReduceMean.
     """
     name = 'mean'
 
 class ReduceProd(Reduce):
-    """ Operator converter for ArgMax.
+    """ Operator converter for ReduceProd.
     """
     name = 'prod'
 
@@ -849,6 +874,54 @@ class ConstantFill(OnnxOpConverter):
         if 'extra_shape' in attr:
             shape = shape + attr.pop('extra_shape')
         return _op.full(inputs[0], shape)
+
+class Sign(OnnxOpConverter):
+    """ Operator converter for Sign.
+    """
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        return _op.sign(inputs[0])
+
+class Equal(Elemwise):
+    """ Operator converter for Equal.
+    """
+    name = 'equal'
+
+
+class Not(Elemwise):
+    """ Operator converter for Not.
+    """
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        return _op.logical_not(inputs[0])
+
+
+class And(Elemwise):
+    """ Operator converter for And.
+    """
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        return _op.logical_and(inputs[0], inputs[1])
+
+
+class Tile(Elemwise):
+    """Operator converter for Tile
+    """
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        if 'repeats' not in attr:
+            raise tvm.error.OpAttributeInvalid('Attribute "repeats" should be set '
+                                               'for operator Tile.')
+        reps = attr.pop('repeats')  # The number of times repeating the tensor data.
+        return _op.tile(inputs[0], reps)
+
+class Erf(OnnxOpConverter):
+    """Operator converter for Erf
+    """
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        return _op.erf(inputs[0])
+
 
 # compatible operators that do NOT require any conversion.
 _identity_list = []
@@ -935,7 +1008,7 @@ def _get_convert_map(opset):
         'GlobalAveragePool': Renamer('global_avg_pool2d'),
         'GlobalMaxPool': Renamer('global_max_pool2d'),
         'BatchNormalization': BatchNorm.get_converter(opset),
-        # 'InstanceNormalization'
+        'InstanceNormalization': InstanceNorm.get_converter(opset),
         # 'LpNormalization'
         'Dropout': AttrCvt('dropout', {'ratio': 'rate'}, ignores=['is_test']),
         'Flatten': Flatten.get_converter(opset),
@@ -964,6 +1037,12 @@ def _get_convert_map(opset):
         'Unsqueeze': Unsqueeze.get_converter(opset),
         'Pad': Pad.get_converter(opset),
         'Shape': Shape.get_converter(opset),
+        'Sign': Sign.get_converter(opset),
+        'Equal': Equal.get_converter(opset),
+        'Not': Not.get_converter(opset),
+        'And': And.get_converter(opset),
+        'Tile': Tile.get_converter(opset),
+        'Erf': Erf.get_converter(opset)
     }
 
 
