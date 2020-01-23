@@ -23,10 +23,11 @@
 #ifndef TVM_RUNTIME_OBJECT_H_
 #define TVM_RUNTIME_OBJECT_H_
 
+#include <dmlc/logging.h>
+#include <tvm/runtime/c_runtime_api.h>
 #include <type_traits>
 #include <string>
 #include <utility>
-#include "c_runtime_api.h"
 
 /*!
  * \brief Whether or not use atomic reference counter.
@@ -49,9 +50,9 @@ namespace runtime {
 enum TypeIndex  {
   /*! \brief Root object type. */
   kRoot = 0,
-  kVMTensor = 1,
-  kVMClosure = 2,
-  kVMADT = 3,
+  kClosure = 1,
+  kVMADT = 2,
+  kRuntimeModule = 3,
   kStaticIndexEnd,
   /*! \brief Type index is allocated during runtime. */
   kDynamic = kStaticIndexEnd
@@ -189,7 +190,7 @@ class Object {
    * \param key The type key.
    * \return the result.
    */
-  TVM_DLL static uint32_t TypeKey2Index(const char* key);
+  TVM_DLL static uint32_t TypeKey2Index(const std::string& key);
 
 #if TVM_OBJECT_ATOMIC_REF_COUNTER
   using RefCounterType = std::atomic<int32_t>;
@@ -197,17 +198,23 @@ class Object {
   using RefCounterType = int32_t;
 #endif
 
-  // Object type properties
   static constexpr const char* _type_key = "Object";
+
+  static uint32_t _GetOrAllocRuntimeTypeIndex() {
+    return TypeIndex::kRoot;
+  }
+  static uint32_t RuntimeTypeIndex() {
+    return TypeIndex::kRoot;
+  }
+
+  // Default object type properties for sub-classes
   static constexpr bool _type_final = false;
   static constexpr uint32_t _type_child_slots = 0;
   static constexpr bool _type_child_slots_can_overflow = true;
-  static uint32_t _GetOrAllocRuntimeTypeIndex() {
-    return 0;
-  }
-  static uint32_t RuntimeTypeIndex() {
-    return 0;
-  }
+  // NOTE: the following field is not type index of Object
+  // but was intended to be used by sub-classes as default value.
+  // The type index of Object is TypeIndex::kRoot
+  static constexpr uint32_t _type_index = TypeIndex::kDynamic;
 
   // Default constructor and copy constructor
   Object() {}
@@ -262,13 +269,12 @@ class Object {
    * \return The allocated type index.
    */
   TVM_DLL static uint32_t GetOrAllocRuntimeTypeIndex(
-      const char* key,
+      const std::string& key,
       uint32_t static_tindex,
       uint32_t parent_tindex,
       uint32_t type_child_slots,
       bool type_child_slots_can_overflow);
 
- private:
   // reference counter related operations
   /*! \brief developer function, increases reference counter. */
   inline void IncRef();
@@ -277,6 +283,8 @@ class Object {
    * \note The deleter will be called when ref_counter_ becomes zero.
    */
   inline void DecRef();
+
+ private:
   /*!
    * \return The usage count of the cell.
    * \note We use stl style naming to be consistent with known API in shared_ptr.
@@ -294,7 +302,7 @@ class Object {
   template<typename>
   friend class ObjectPtr;
   friend class TVMRetValue;
-  friend class TVMObjectCAPI;
+  friend class ObjectInternal;
 };
 
 /*!
@@ -302,15 +310,15 @@ class Object {
  *
  *  It is always important to get a reference type
  *  if we want to return a value as reference or keep
- *  the node alive beyond the scope of the function.
+ *  the object alive beyond the scope of the function.
  *
- * \param ptr The node pointer
+ * \param ptr The object pointer
  * \tparam RefType The reference type
- * \tparam ObjectType The node type
+ * \tparam ObjectType The object type
  * \return The corresponding RefType
  */
-template <typename RefType, typename ObjectType>
-inline RefType GetRef(const ObjectType* ptr);
+template <typename RelayRefType, typename ObjectType>
+inline RelayRefType GetRef(const ObjectType* ptr);
 
 /*!
  * \brief Downcast a base reference type to a more specific type.
@@ -476,8 +484,10 @@ class ObjectPtr {
   friend class TVMArgsSetter;
   friend class TVMRetValue;
   friend class TVMArgValue;
-  template <typename RefType, typename ObjType>
-  friend RefType GetRef(const ObjType* ptr);
+  template <typename RelayRefType, typename ObjType>
+  friend RelayRefType GetRef(const ObjType* ptr);
+  template <typename BaseType, typename ObjType>
+  friend ObjectPtr<BaseType> GetObjectPtr(ObjType* ptr);
 };
 
 /*! \brief Base class of all object reference */
@@ -505,7 +515,7 @@ class ObjectRef {
   }
   /*!
    * \brief Comparator
-   * \param other Another node ref.
+   * \param other Another object ref.
    * \return the compare result.
    */
   bool operator!=(const ObjectRef& other) const {
@@ -527,7 +537,7 @@ class ObjectRef {
   const Object* get() const {
     return data_.get();
   }
-  /*! \return the internal node pointer */
+  /*! \return the internal object pointer */
   const Object* operator->() const {
     return get();
   }
@@ -570,6 +580,14 @@ class ObjectRef {
     return T(std::move(ref.data_));
   }
   /*!
+   * \brief Clear the object ref data field without DecRef
+   *        after we successfully moved the field.
+   * \param ref The reference data.
+   */
+  static void FFIClearAfterMove(ObjectRef* ref) {
+    ref->data_.data_ = nullptr;
+  }
+  /*!
    * \brief Internal helper function get data_ as ObjectPtr of ObjectType.
    * \note only used for internal dev purpose.
    * \tparam ObjectType The corresponding object type.
@@ -587,6 +605,16 @@ class ObjectRef {
   friend SubRef Downcast(BaseRef ref);
 };
 
+/*!
+ * \brief Get an object ptr type from a raw object ptr.
+ *
+ * \param ptr The object pointer
+ * \tparam BaseType The reference type
+ * \tparam ObjectType The object type
+ * \return The corresponding RefType
+ */
+template <typename BaseType, typename ObjectType>
+inline ObjectPtr<BaseType> GetObjectPtr(ObjectType* ptr);
 
 /*! \brief ObjectRef hash functor */
 struct ObjectHash {
@@ -620,14 +648,15 @@ struct ObjectEqual {
  * \param ParentType The name of the ParentType
  */
 #define TVM_DECLARE_BASE_OBJECT_INFO(TypeName, ParentType)              \
+  static_assert(!ParentType::_type_final, "ParentObj maked as final");  \
   static const uint32_t RuntimeTypeIndex()  {                           \
-    if (_type_index != ::tvm::runtime::TypeIndex::kDynamic) {           \
-      return _type_index;                                               \
+    if (TypeName::_type_index != ::tvm::runtime::TypeIndex::kDynamic) { \
+      return TypeName::_type_index;                                     \
     }                                                                   \
     return _GetOrAllocRuntimeTypeIndex();                               \
   }                                                                     \
   static const uint32_t _GetOrAllocRuntimeTypeIndex()  {                \
-    static uint32_t tidx = GetOrAllocRuntimeTypeIndex(                  \
+    static uint32_t tidx = Object::GetOrAllocRuntimeTypeIndex(          \
         TypeName::_type_key,                                            \
         TypeName::_type_index,                                          \
         ParentType::_GetOrAllocRuntimeTypeIndex(),                      \
@@ -647,6 +676,19 @@ struct ObjectEqual {
   TVM_DECLARE_BASE_OBJECT_INFO(TypeName, ParentType)                    \
 
 
+/*! \brief helper macro to supress unused warning */
+#if defined(__GNUC__)
+#define TVM_ATTRIBUTE_UNUSED __attribute__((unused))
+#else
+#define TVM_ATTRIBUTE_UNUSED
+#endif
+
+#define TVM_STR_CONCAT_(__x, __y) __x##__y
+#define TVM_STR_CONCAT(__x, __y) TVM_STR_CONCAT_(__x, __y)
+
+#define TVM_OBJECT_REG_VAR_DEF                              \
+  static TVM_ATTRIBUTE_UNUSED uint32_t __make_Object_tid
+
 /*!
  * \brief Helper macro to register the object type to runtime.
  *  Makes sure that the runtime type table is correctly populated.
@@ -654,10 +696,15 @@ struct ObjectEqual {
  *  Use this macro in the cc file for each terminal class.
  */
 #define TVM_REGISTER_OBJECT_TYPE(TypeName)                              \
-  static DMLC_ATTRIBUTE_UNUSED uint32_t __make_Object_tidx ## _ ## TypeName ## __ = \
+  TVM_STR_CONCAT(TVM_OBJECT_REG_VAR_DEF, __COUNTER__) =                 \
       TypeName::_GetOrAllocRuntimeTypeIndex()
 
-
+/*
+ * \brief Define object reference methods.
+ * \param TypeName The object type name
+ * \param ParentType The parent type of the objectref
+ * \param ObjectName The type name of the object.
+ */
 #define TVM_DEFINE_OBJECT_REF_METHODS(TypeName, ParentType, ObjectName) \
   TypeName() {}                                                         \
   explicit TypeName(                                                    \
@@ -666,9 +713,54 @@ struct ObjectEqual {
   const ObjectName* operator->() const {                                \
     return static_cast<const ObjectName*>(data_.get());                 \
   }                                                                     \
-  operator bool() const { return data_ != nullptr; }                    \
   using ContainerType = ObjectName;
 
+/*
+ * \brief Define object reference methods of whose content is mutable.
+ * \param TypeName The object type name
+ * \param ParentType The parent type of the objectref
+ * \param ObjectName The type name of the object.
+ * \note We recommend making objects immutable when possible.
+ *       This macro is only reserved for objects that stores runtime states.
+ */
+#define TVM_DEFINE_MUTABLE_OBJECT_REF_METHODS(TypeName, ParentType, ObjectName) \
+  TypeName() {}                                                         \
+  explicit TypeName(                                                    \
+      ::tvm::runtime::ObjectPtr<::tvm::runtime::Object> n)              \
+      : ParentType(n) {}                                                \
+  ObjectName* operator->() const {                                      \
+    return static_cast<ObjectName*>(data_.get());                       \
+  }                                                                     \
+  using ContainerType = ObjectName;
+
+/*!
+ * \brief Define CopyOnWrite function in an ObjectRef.
+ * \param ObjectName The Type of the Node.
+ *
+ *  CopyOnWrite will generate a unique copy of the internal node.
+ *  The node will be copied if it is referenced by multiple places.
+ *  The function returns the raw pointer to the node to allow modification
+ *  of the content.
+ *
+ * \code
+ *
+ *  MyCOWObjectRef ref, ref2;
+ *  ref2 = ref;
+ *  ref.CopyOnWrite()->value = new_value;
+ *  assert(ref2->value == old_value);
+ *  assert(ref->value == new_value);
+ *
+ * \endcode
+ */
+#define TVM_DEFINE_OBJECT_REF_COW_METHOD(ObjectName)                    \
+  ObjectName* CopyOnWrite() {                                           \
+      CHECK(data_ != nullptr);                                          \
+      if (!data_.unique())  {                                           \
+        auto n = make_object<ObjectName>(*(operator->()));              \
+        ObjectPtr<Object>(std::move(n)).swap(data_);                    \
+      }                                                                 \
+      return static_cast<ObjectName*>(data_.get());                     \
+    }
 
 // Implementations details below
 // Object reference counting.
@@ -756,11 +848,18 @@ inline const ObjectType* ObjectRef::as() const {
   }
 }
 
-template <typename RefType, typename ObjType>
-inline RefType GetRef(const ObjType* ptr) {
-  static_assert(std::is_base_of<typename RefType::ContainerType, ObjType>::value,
+template <typename RelayRefType, typename ObjType>
+inline RelayRefType GetRef(const ObjType* ptr) {
+  static_assert(std::is_base_of<typename RelayRefType::ContainerType, ObjType>::value,
                 "Can only cast to the ref of same container type");
-  return RefType(ObjectPtr<Object>(const_cast<Object*>(static_cast<const Object*>(ptr))));
+  return RelayRefType(ObjectPtr<Object>(const_cast<Object*>(static_cast<const Object*>(ptr))));
+}
+
+template <typename BaseType, typename ObjType>
+inline ObjectPtr<BaseType> GetObjectPtr(ObjType* ptr) {
+  static_assert(std::is_base_of<BaseType, ObjType>::value,
+                "Can only cast to the ref of same container type");
+  return ObjectPtr<BaseType>(static_cast<Object*>(ptr));
 }
 
 template <typename SubRef, typename BaseRef>
@@ -772,10 +871,6 @@ inline SubRef Downcast(BaseRef ref) {
 }
 
 }  // namespace runtime
-
-template<typename T>
-using NodePtr = runtime::ObjectPtr<T>;
-
 }  // namespace tvm
 
 #endif  // TVM_RUNTIME_OBJECT_H_

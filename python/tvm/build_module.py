@@ -23,7 +23,7 @@ from __future__ import absolute_import as _abs
 import warnings
 
 from ._ffi.function import Function
-from ._ffi.node import NodeBase, register_node
+from ._ffi.object import Object, register_object
 from . import api
 from . import _api_internal
 from . import tensor
@@ -115,22 +115,22 @@ class DumpIR(object):
         DumpIR.scope_level -= 1
 
 
-@register_node
-class BuildConfig(NodeBase):
+@register_object
+class BuildConfig(Object):
     """Configuration scope to set a build config option.
 
     Note
     ----
-    This object is backed by node system in C++, with arguments that can be
+    This object is backed by object protocol in C++, with arguments that can be
     exchanged between python and C++.
 
     Do not construct directly, use build_config instead.
 
-    The fields that are backed by the C++ node are immutable once an instance
-    is constructed. See _node_defaults for the fields.
+    The fields that are backed by the C++ object are immutable once an instance
+    is constructed. See _object_defaults for the fields.
     """
 
-    _node_defaults = {
+    _object_defaults = {
         "auto_unroll_max_step": 0,
         "auto_unroll_max_depth": 8,
         "auto_unroll_max_extent": 0,
@@ -144,7 +144,8 @@ class BuildConfig(NodeBase):
         "dump_pass_ir": False,
         "instrument_bound_checkers": False,
         "disable_select_rewriting": False,
-        "disable_vectorize": False
+        "disable_vectorize": False,
+        "disable_assert": False
     }
     _dump_ir = DumpIR()
 
@@ -190,7 +191,7 @@ class BuildConfig(NodeBase):
         _api_internal._ExitBuildConfigScope(self)
 
     def __setattr__(self, name, value):
-        if name in BuildConfig._node_defaults:
+        if name in BuildConfig._object_defaults:
             raise AttributeError(
                 "'%s' object cannot set attribute '%s'" % (str(type(self)), name))
         return super(BuildConfig, self).__setattr__(name, value)
@@ -256,7 +257,7 @@ def build_config(**kwargs):
         The build configuration
     """
     node_args = {k: v if k not in kwargs else kwargs[k]
-                 for k, v in BuildConfig._node_defaults.items()}
+                 for k, v in BuildConfig._object_defaults.items()}
     config = make.node("BuildConfig", **node_args)
 
     if "add_lower_pass" in kwargs:
@@ -387,6 +388,7 @@ def lower(sch,
     binds, arg_list = get_binds(args, compact, binds)
 
     # Phase 1
+    stmt = ir_pass.RewriteForTensorCore(stmt, sch, binds)
     stmt = ir_pass.StorageFlatten(stmt, binds, 64, cfg.instrument_bound_checkers)
     stmt = ir_pass.CanonicalSimplify(stmt)
     for f in lower_phase1:
@@ -413,7 +415,6 @@ def lower(sch,
 
     # Phase 3
     stmt = ir_pass.Simplify(stmt)
-    stmt = ir_pass.LowerStorageAccessInfo(stmt)
     stmt = ir_pass.RemoveNoOp(stmt)
     if not cfg.disable_select_rewriting:
         stmt = ir_pass.RewriteUnsafeSelect(stmt)
@@ -465,6 +466,7 @@ def _build_for_device(flist, target, target_host):
                 func = ir_pass.ThreadSync(func, "global")
             func = ir_pass.ThreadSync(func, "shared")
             func = ir_pass.ThreadSync(func, "warp")
+            func = ir_pass.InferFragment(func)
             warp_size = target.thread_warp_size
             func = ir_pass.LowerThreadAllreduce(func, warp_size)
             fsplits = [s for s in ir_pass.SplitHostDevice(func)]
@@ -494,6 +496,8 @@ def _build_for_device(flist, target, target_host):
         assert not fdevice
 
     target_host = _target.create(target_host)
+    fdevice = [ir_pass.LowerDeviceStorageAccessInfo(x) for x in fdevice]
+    fhost = [ir_pass.LowerDeviceStorageAccessInfo(x) for x in fhost]
     fdevice = [ir_pass.LowerIntrin(x, target.target_name) for x in fdevice]
     fhost = [ir_pass.LowerIntrin(x, target_host.target_name) for x in fhost]
     fhost = [ir_pass.CombineContextCall(x) for x in fhost]
@@ -568,10 +572,11 @@ def build(inputs,
         B = tvm.placeholder((n,), name='B')
         C = tvm.compute(A.shape, lambda *i: A(*i) + B(*i), name='C')
         s1 = tvm.create_schedule(C.op)
-        s2 = topi.cpp.cuda.schedule_injective("cuda", [C])
-        f1 = tvm.lower(s1, [A, B, C], name="test_add1")
-        f2 = tvm.lower(s2, [A, B, C], name="test_add2")
-        m = tvm.build({"llvm": [f1], "cuda": [f2]}, target_host="llvm")
+        with tvm.target.cuda() as cuda_tgt:
+          s2 = topi.cuda.schedule_injective(cuda_tgt, [C])
+          f1 = tvm.lower(s1, [A, B, C], name="test_add1")
+          f2 = tvm.lower(s2, [A, B, C], name="test_add2")
+          m = tvm.build({"llvm": [f1], "cuda": [f2]}, target_host="llvm")
 
     Note
     ----

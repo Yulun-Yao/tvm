@@ -21,6 +21,7 @@ from tvm import autotvm
 from tvm.contrib import cudnn
 
 from .. import nn, generic
+from ..nn.util import get_pad_tuple
 from ..util import get_const_tuple, traverse_inline
 
 from .conv2d_direct import schedule_direct_cuda
@@ -49,8 +50,10 @@ def conv2d_cuda(cfg, data, kernel, strides, padding, dilation, layout='NCHW', ou
     strides : int or a list/tuple of two ints
         stride size, or [stride_height, stride_width]
 
-    padding : int or a list/tuple of two ints
-        padding size, or [pad_height, pad_width]
+    padding : int or a list/tuple of 2 or 4 ints
+        padding size, or
+        [pad_height, pad_width] for 2 ints, or
+        [pad_top, pad_left, pad_bottom, pad_right] for 4 ints
 
     dilation: int or a list/tuple of two ints
         dilation size, or [dilation_height, dilation_width]
@@ -81,25 +84,32 @@ def conv2d_cuda(cfg, data, kernel, strides, padding, dilation, layout='NCHW', ou
 
         # handle dilation
         stride_h, stride_w = (strides, strides) if isinstance(strides, int) else strides
-        pad_h, pad_w = (padding, padding) if isinstance(padding, int) else padding
         dilation_h, dilation_w = (dilation, dilation) if isinstance(dilation, int) else dilation
 
-        OH = (H + 2 * pad_h - KH) // stride_h + 1
-        OW = (W + 2 * pad_w - KW) // stride_w + 1
+        if isinstance(padding, (list, tuple)) and len(padding) > 2:
+            raise ValueError("Cudnn doesn't support asymmetric padding.")
+        pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
+        OH = (H + pt + pb - KH) // stride_h + 1
+        OW = (W + pl + pr - KW) // stride_w + 1
         cfg.add_flop(2 * N * OH * OW * CO * CI * ((KH - 1) * dilation_h + 1) *\
                     ((KW - 1) * dilation_w + 1))
 
-        return cudnn.conv2d_forward(data,
-                                    kernel,
-                                    stride_h,
-                                    stride_w,
-                                    pad_h,
-                                    pad_w,
-                                    dilation_h,
-                                    dilation_w,
-                                    conv_mode=1,
-                                    tensor_format=tensor_format,
-                                    algo=-1)  # let CUDNN choose the best algo
+        if data.dtype == "int8" or kernel.dtype == "int8":
+            if layout == 'NCHW':
+                raise ValueError("NCHW layout do not support int8 in cudnn")
+            dtype = "int32"
+        else:
+            dtype = data.dtype
+
+        return cudnn.conv_forward(data,
+                                  kernel,
+                                  [pt, pl], # cudnn padding pt, pl on both sides of input
+                                  [stride_h, stride_w],
+                                  [dilation_h, dilation_w],
+                                  conv_mode=1,
+                                  tensor_format=tensor_format,
+                                  algo=-1,         # let CUDNN choose the best algo
+                                  conv_dtype=dtype)
 
     if cfg.template_key == 'winograd':
         return winograd_cuda(cfg, data, kernel, strides, padding, dilation, layout, out_dtype,
@@ -113,6 +123,8 @@ def conv2d_cuda(cfg, data, kernel, strides, padding, dilation, layout='NCHW', ou
         return nn.conv2d_nchw(data, kernel, strides, padding, dilation, out_dtype)
     if layout == 'HWCN':
         return nn.conv2d_hwcn(data, kernel, strides, padding, dilation, out_dtype)
+    if layout == 'NHWC':
+        return nn.conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
     raise ValueError("not support this layout {} yet".format(layout))
 
 
@@ -149,6 +161,40 @@ def schedule_conv2d_nchw_cuda(cfg, outs):
             schedule_winograd_cuda(cfg, s, op.output(0), pre_computed=False)
         if op.tag == "conv2d_NCHWc_int8":
             schedule_conv2d_NCHWc_int8(cfg, s, op.output(0))
+
+    traverse_inline(s, outs[0].op, _callback)
+    return s
+
+
+@autotvm.register_topi_schedule(generic.schedule_conv2d_nhwc, ["cuda", "gpu"],
+                                ["direct"])
+def schedule_conv2d_nhwc_cuda(cfg, outs):
+    """TOPI schedule for CUDA conv2d_nhwc
+
+    Parameters
+    ----------
+    cfg: ConfigEntity
+        The config for this template
+
+    outs: Array of Tensor
+        The computation graph description of conv2d
+        in the format of an array of tensors.
+
+    Returns
+    -------
+    s: Schedule
+        The computation schedule for conv2d.
+    """
+    target = tvm.target.current_target()
+    if 'cudnn' in target.libs:
+        return generic.schedule_extern(outs)
+
+    outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
+    s = tvm.create_schedule([x.op for x in outs])
+
+    def _callback(op):
+        if op.tag == 'conv2d_nhwc':
+            schedule_direct_cuda(cfg, s, op.output(0))
 
     traverse_inline(s, outs[0].op, _callback)
     return s

@@ -18,13 +18,12 @@
  */
 
 /*!
- * Copyright (c) 2019 by Contributors
  * \file legalize.cc
  * \brief Converts an expr to another expr. This pass can be used to transform an op based on its
  * shape, dtype or layout to another op or a sequence of ops.
  */
 
-#include <tvm/operation.h>
+#include <tvm/te/operation.h>
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/op_attr_types.h>
 #include <tvm/relay/transform.h>
@@ -99,14 +98,14 @@ Expr Legalize(const Expr& expr, const std::string& legalize_map_attr_name) {
 namespace transform {
 
 Pass Legalize(const std::string& legalize_map_attr_name) {
-  runtime::TypedPackedFunc<Function(Function, Module, PassContext)> pass_func =
-      [=](Function f, Module m, PassContext pc) {
+  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
+      [=](Function f, IRModule m, PassContext pc) {
         return Downcast<Function>(relay::legalize::Legalize(f, legalize_map_attr_name));
       };
-  return CreateFunctionPass(pass_func, 0, "Legalize", {ir::StringImm::make("InferType")});
+  return CreateFunctionPass(pass_func, 1, "Legalize", {tir::StringImmNode::make("InferType")});
 }
 
-TVM_REGISTER_API("relay._transform.Legalize").set_body_typed(Legalize);
+TVM_REGISTER_GLOBAL("relay._transform.Legalize").set_body_typed(Legalize);
 
 }  // namespace transform
 

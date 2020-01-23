@@ -18,8 +18,6 @@
  */
 
 /*!
- * Copyright (c) 2018 by Contributors
- *
  * \file deivce_annotation.cc
  * \brief Passes to rewrite annotated program and retrieve the device allocation
  * of expression.
@@ -30,6 +28,7 @@
  *  3. Collect the device allocation of each expression.
  */
 
+#include <tvm/tir/expr.h>
 #include <tvm/relay/attrs/device_copy.h>
 #include <tvm/relay/attrs/annotation.h>
 #include <tvm/relay/expr.h>
@@ -46,13 +45,15 @@ namespace relay {
 namespace {
 
 bool IsOnDeviceNode(const ExprNode* node) {
-  const auto* call_node = dynamic_cast<const CallNode*>(node);
-  return call_node != nullptr && call_node->attrs.as<OnDeviceAttrs>();
+  if (!node->IsInstance<CallNode>()) return false;
+  const auto* call_node = static_cast<const CallNode*>(node);
+  return call_node->attrs.as<OnDeviceAttrs>();
 }
 
 bool IsDeviceCopyNode(const ExprNode* node) {
-  const auto* call_node = dynamic_cast<const CallNode*>(node);
-  return call_node != nullptr && call_node->attrs.as<DeviceCopyAttrs>();
+  if (!node->IsInstance<CallNode>()) return false;
+  const auto* call_node = static_cast<const CallNode*>(node);
+  return call_node->attrs.as<DeviceCopyAttrs>();
 }
 
 }  // namespace
@@ -279,7 +280,7 @@ class RewriteAnnotation : public ExprMutator {
    * \return The created call node.
    */
   Call CreateDeviceCopy(const Expr& src, int src_dev_type, int dst_dev_type) {
-    auto attrs = make_node<DeviceCopyAttrs>();
+    auto attrs = make_object<DeviceCopyAttrs>();
     attrs->src_dev_type = src_dev_type;
     attrs->dst_dev_type = dst_dev_type;
     static const Op& op = Op::Get("device_copy");
@@ -415,7 +416,6 @@ class DeviceInfo {
 
     void VisitExpr_(const TupleGetItemNode* op) final {
       ExprVisitor::VisitExpr_(op);
-      std::make_pair(op, has_copy_);
     }
 
     void VisitExpr_(const VarNode* vn) final {
@@ -448,7 +448,8 @@ class DeviceInfo {
   static const ExprNode* GetDeviceCopyNode(const ExprNode* node) {
     if (IsDeviceCopyNode(node)) {
       return node;
-    } else if (const auto* call_node = dynamic_cast<const CallNode*>(node)) {
+    } else if (node->IsInstance<CallNode>()) {
+      const auto* call_node = static_cast<const CallNode*>(node);
       if (const auto* fn = call_node->op.as<FunctionNode>()) {
         const ExprNode* body = fn->body.operator->();
         if (IsDeviceCopyNode(body)) {
@@ -473,7 +474,8 @@ class DeviceInfo {
     for (auto it = post_visitor_.post_dfs_order_.crbegin();
          it != post_visitor_.post_dfs_order_.crend(); ++it) {
       if (const auto* node = GetDeviceCopyNode(it->first)) {
-        last_copy_node = dynamic_cast<const CallNode*>(node);
+        CHECK(node->IsInstance<CallNode>());
+        last_copy_node = static_cast<const CallNode*>(node);
         const auto* attrs = last_copy_node->attrs.as<DeviceCopyAttrs>();
         cur_dev_type = attrs->src_dev_type;
         if (out_dev_type == -1) out_dev_type = attrs->dst_dev_type;
@@ -558,27 +560,27 @@ Map<Expr, Integer> CollectDeviceAnnotationOps(const Expr& expr) {
   return AnnotatationVisitor::GetAnnotations(expr);
 }
 
-TVM_REGISTER_API("relay._analysis.CollectDeviceInfo")
+TVM_REGISTER_GLOBAL("relay._analysis.CollectDeviceInfo")
 .set_body_typed(CollectDeviceInfo);
 
-TVM_REGISTER_API("relay._analysis.RewriteDeviceAnnotation")
+TVM_REGISTER_GLOBAL("relay._analysis.RewriteDeviceAnnotation")
 .set_body_typed(RewriteAnnotatedOps);
 
-TVM_REGISTER_API("relay._analysis.CollectDeviceAnnotationOps")
+TVM_REGISTER_GLOBAL("relay._analysis.CollectDeviceAnnotationOps")
 .set_body_typed(CollectDeviceAnnotationOps);
 
 namespace transform {
 
 Pass RewriteAnnotatedOps(int fallback_device) {
-  runtime::TypedPackedFunc<Function(Function, Module, PassContext)> pass_func =
-    [=](Function f, Module m, PassContext pc) {
+  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
+    [=](Function f, IRModule m, PassContext pc) {
     return Downcast<Function>(RewriteAnnotatedOps(f, fallback_device));
   };
   return CreateFunctionPass(pass_func, 1, "RewriteAnnotatedOps",
-                            {ir::StringImm::make("InferType")});
+                            {tir::StringImmNode::make("InferType")});
 }
 
-TVM_REGISTER_API("relay._transform.RewriteDeviceAnnotation")
+TVM_REGISTER_GLOBAL("relay._transform.RewriteDeviceAnnotation")
 .set_body_typed(RewriteAnnotatedOps);
 
 }  // namespace transform

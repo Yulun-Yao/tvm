@@ -16,11 +16,13 @@
 # under the License.
 """Container data structures used in TVM DSL."""
 from __future__ import absolute_import as _abs
-from ._ffi.node import NodeBase, register_node
+from tvm import ndarray as _nd
 from . import _api_internal
+from ._ffi.object import Object, register_object, getitem_helper
+from ._ffi.function import _init_api
 
-@register_node
-class Array(NodeBase):
+@register_object
+class Array(Object):
     """Array container of TVM.
 
     You do not need to create Array explicitly.
@@ -50,8 +52,8 @@ class Array(NodeBase):
         return _api_internal._ArraySize(self)
 
 
-@register_node
-class EnvFunc(NodeBase):
+@register_object
+class EnvFunc(Object):
     """Environment function.
 
     This is a global function object that can be serialized by its name.
@@ -64,13 +66,13 @@ class EnvFunc(NodeBase):
         return _api_internal._EnvFuncGetPackedFunc(self)
 
 
-@register_node
-class Map(NodeBase):
+@register_object
+class Map(Object):
     """Map container of TVM.
 
     You do not need to create Map explicitly.
     Normally python dict will be converted automaticall to Map during tvm function call.
-    You can use convert to create a dict[NodeBase-> NodeBase] into a Map
+    You can use convert to create a dict[Object-> Object] into a Map
     """
     def __getitem__(self, k):
         return _api_internal._MapGetItem(self, k)
@@ -87,11 +89,11 @@ class Map(NodeBase):
         return _api_internal._MapSize(self)
 
 
-@register_node
+@register_object
 class StrMap(Map):
     """A special map container that has str as key.
 
-    You can use convert to create a dict[str->NodeBase] into a Map.
+    You can use convert to create a dict[str->Object] into a Map.
     """
     def items(self):
         """Get the items from the map"""
@@ -99,8 +101,8 @@ class StrMap(Map):
         return [(akvs[i].value, akvs[i+1]) for i in range(0, len(akvs), 2)]
 
 
-@register_node
-class Range(NodeBase):
+@register_object
+class Range(Object):
     """Represent a range in TVM.
 
     You do not need to create a Range explicitly.
@@ -108,9 +110,62 @@ class Range(NodeBase):
     """
 
 
-@register_node
-class LoweredFunc(NodeBase):
+@register_object
+class LoweredFunc(Object):
     """Represent a LoweredFunc in TVM."""
     MixedFunc = 0
     HostFunc = 1
     DeviceFunc = 2
+
+
+@register_object("vm.ADT")
+class ADT(Object):
+    """Algebatic data type(ADT) object.
+
+    Parameters
+    ----------
+    tag : int
+        The tag of ADT.
+
+    fields : list[Object] or tuple[Object]
+        The source tuple.
+    """
+    def __init__(self, tag, fields):
+        for f in fields:
+            assert isinstance(f, (Object, _nd.NDArray)), "Expect object or " \
+            "tvm NDArray type, but received : {0}".format(type(f))
+        self.__init_handle_by_constructor__(_ADT, tag, *fields)
+
+    @property
+    def tag(self):
+        return _GetADTTag(self)
+
+    def __getitem__(self, idx):
+        return getitem_helper(
+            self, _GetADTFields, len(self), idx)
+
+    def __len__(self):
+        return _GetADTSize(self)
+
+
+def tuple_object(fields=None):
+    """Create a ADT object from source tuple.
+
+    Parameters
+    ----------
+    fields : list[Object] or tuple[Object]
+        The source tuple.
+
+    Returns
+    -------
+    ret : ADT
+        The created object.
+    """
+    fields = fields if fields else []
+    for f in fields:
+        assert isinstance(f, (Object, _nd.NDArray)), "Expect object or tvm " \
+        "NDArray type, but received : {0}".format(type(f))
+    return _Tuple(*fields)
+
+
+_init_api("tvm.container")

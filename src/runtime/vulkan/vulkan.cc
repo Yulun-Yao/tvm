@@ -117,7 +117,10 @@ class VulkanDeviceAPI final : public DeviceAPI {
   }
   void SetDevice(TVMContext ctx) final { VulkanThreadEntry::ThreadLocal()->ctx = ctx; }
   void GetAttr(TVMContext ctx, DeviceAttrKind kind, TVMRetValue* rv) final;
-  void* AllocDataSpace(TVMContext ctx, size_t nbytes, size_t alignment, TVMType type_hint) final {
+  void* AllocDataSpace(TVMContext ctx,
+                       size_t nbytes,
+                       size_t alignment,
+                       DLDataType type_hint) final {
     const auto& vctx = context(ctx.device_id);
     VkBufferCreateInfo info;
     info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -194,7 +197,7 @@ class VulkanDeviceAPI final : public DeviceAPI {
   }
 
   void CopyDataFromTo(const void* from, size_t from_offset, void* to, size_t to_offset, size_t size,
-                      TVMContext ctx_from, TVMContext ctx_to, TVMType type_hint,
+                      TVMContext ctx_from, TVMContext ctx_to, DLDataType type_hint,
                       TVMStreamHandle stream) final {
     CHECK(stream == nullptr);
     TVMContext ctx = ctx_from;
@@ -327,7 +330,7 @@ class VulkanDeviceAPI final : public DeviceAPI {
     return;
   }
 
-  void* AllocWorkspace(TVMContext ctx, size_t size, TVMType type_hint) final {
+  void* AllocWorkspace(TVMContext ctx, size_t size, DLDataType type_hint) final {
     return VulkanThreadEntry::ThreadLocal()->pool.AllocWorkspace(ctx, size);
   }
 
@@ -398,6 +401,8 @@ void VulkanDeviceAPI::GetAttr(TVMContext ctx, DeviceAttrKind kind, TVMRetValue* 
       break;
     case kMaxThreadDimensions:
       break;
+    case kGcnArch:
+      return;
   }
 }
 
@@ -663,7 +668,9 @@ class VulkanModuleNode;
 // a wrapped function class to get packed func.
 class VulkanWrappedFunc {
  public:
-  void Init(VulkanModuleNode* m, std::shared_ptr<ModuleNode> sptr, const std::string& func_name,
+  void Init(VulkanModuleNode* m,
+            ObjectPtr<Object> sptr,
+            const std::string& func_name,
             size_t num_buffer_args, size_t num_pack_args,
             const std::vector<std::string>& thread_axis_tags) {
     m_ = m;
@@ -680,7 +687,7 @@ class VulkanWrappedFunc {
   // internal module
   VulkanModuleNode* m_;
   // the resource holder
-  std::shared_ptr<ModuleNode> sptr_;
+  ObjectPtr<Object> sptr_;
   // v The name of the function.
   std::string func_name_;
   // Number of buffer arguments
@@ -705,7 +712,7 @@ class VulkanModuleNode final : public runtime::ModuleNode {
   const char* type_key() const final { return "vulkan"; }
 
   PackedFunc GetFunction(const std::string& name,
-                         const std::shared_ptr<ModuleNode>& sptr_to_self) final {
+                         const ObjectPtr<Object>& sptr_to_self) final {
     CHECK_EQ(sptr_to_self.get(), this);
     CHECK_NE(name, symbol::tvm_module_main) << "Device function do not have main";
     auto it = fmap_.find(name);
@@ -720,7 +727,7 @@ class VulkanModuleNode final : public runtime::ModuleNode {
 
   ~VulkanModuleNode() {
     // cleanup vulkan related caches.
-    for (int device_id = 0; device_id < ecache_.size(); ++device_id) {
+    for (size_t device_id = 0; device_id < ecache_.size(); ++device_id) {
       for (auto& kv : ecache_[device_id]) {
         auto& pe = kv.second;
         CHECK(pe);
@@ -768,8 +775,8 @@ class VulkanModuleNode final : public runtime::ModuleNode {
     {
       auto fit = fmap_.find(func_name);
       CHECK(fit != fmap_.end());
-      for (TVMType arg_type : fit->second.arg_types) {
-        if (arg_type.code == kHandle) {
+      for (DLDataType arg_type : fit->second.arg_types) {
+        if (arg_type.code == kTVMOpaqueHandle) {
           {
             VkDescriptorSetLayoutBinding bd;
             bd.binding = num_buffer;
@@ -939,7 +946,7 @@ class VulkanModuleNode final : public runtime::ModuleNode {
 
 Module VulkanModuleCreate(std::unordered_map<std::string, VulkanShader> smap,
                           std::unordered_map<std::string, FunctionInfo> fmap, std::string source) {
-  std::shared_ptr<VulkanModuleNode> n = std::make_shared<VulkanModuleNode>(smap, fmap, source);
+  auto n = make_object<VulkanModuleNode>(smap, fmap, source);
   return Module(n);
 }
 
@@ -1022,7 +1029,7 @@ void VulkanWrappedFunc::operator()(TVMArgs args, TVMRetValue* rv,
   ThreadWorkLoad wl = thread_axis_cfg_.Extract(args);
   std::vector<VkDescriptorBufferInfo> descriptor_buffers;
   descriptor_buffers.resize(num_buffer_args_);
-  for (int i = 0; i < num_buffer_args_; ++i) {
+  for (size_t i = 0; i < num_buffer_args_; ++i) {
     void* buf = args[static_cast<int>(i)];
     VkDescriptorBufferInfo binfo;
     binfo.buffer = static_cast<VulkanBuffer*>(buf)->buffer;
@@ -1062,7 +1069,7 @@ void VulkanWrappedFunc::operator()(TVMArgs args, TVMRetValue* rv,
   const auto& deferred_initializer = [&vctx, pipeline, descriptor_buffers]() {
     std::vector<VkWriteDescriptorSet> write_descriptor_sets;
     write_descriptor_sets.resize(descriptor_buffers.size());
-    for (int i = 0; i < write_descriptor_sets.size(); i++) {
+    for (size_t i = 0; i < write_descriptor_sets.size(); i++) {
       write_descriptor_sets[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       write_descriptor_sets[i].pNext = 0;
       write_descriptor_sets[i].dstSet = pipeline->descriptor_set;
@@ -1100,7 +1107,7 @@ void VulkanWrappedFunc::operator()(TVMArgs args, TVMRetValue* rv,
   VulkanStreamToken deferred_token;
   deferred_token.descriptor_set_ = pipeline->descriptor_set;
   deferred_token.buffers_.resize(descriptor_buffers.size());
-  for (int i = 0; i < descriptor_buffers.size(); ++i) {
+  for (size_t i = 0; i < descriptor_buffers.size(); ++i) {
     deferred_token.buffers_[i] = descriptor_buffers[i].buffer;
   }
   VulkanThreadEntry::ThreadLocal()->Stream(device_id)->LaunchDeferred(

@@ -17,6 +17,7 @@
 #pylint: disable=invalid-name
 """Utilities for testing and benchmarks"""
 from __future__ import absolute_import as _abs
+import numpy as np
 
 import tvm
 import tvm.relay as relay
@@ -24,7 +25,6 @@ import tvm.relay.op as op
 from tvm.relay import transform
 from tvm.relay import Function, GlobalVar, ScopeBuilder, Tuple, TupleGetItem, create_executor
 from tvm.relay import TensorType, TupleType
-import numpy as np
 
 from . import mlp
 from . import resnet
@@ -37,6 +37,7 @@ from . import squeezenet
 from . import vgg
 from . import densenet
 from . import yolo_detection
+from . import temp_op_attr
 
 from .config import ctx_list
 from .init import create_workload

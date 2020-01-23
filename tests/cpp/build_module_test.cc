@@ -20,23 +20,24 @@
 #include <dmlc/logging.h>
 #include <gtest/gtest.h>
 #include <topi/cuda/injective.h>
-#include <tvm/operation.h>
-#include <tvm/packed_func_ext.h>
-#include <tvm/build_module.h>
+#include <tvm/te/operation.h>
+#include <tvm/runtime/registry.h>
+#include <tvm/driver/driver_api.h>
 
 #include <string>
 #include <cmath>
 
 TEST(BuildModule, Basic) {
   using namespace tvm;
+  using namespace tvm::te;
   auto n = var("n");
-  Array<Expr> shape;
+  Array<PrimExpr> shape;
   shape.push_back(n);
 
-  auto A = placeholder(shape, Float(32), "A");
-  auto B = placeholder(shape, Float(32), "B");
+  auto A = placeholder(shape, DataType::Float(32), "A");
+  auto B = placeholder(shape, DataType::Float(32), "B");
 
-  auto C = compute(A->shape, [&A, &B](Expr i) {
+  auto C = compute(A->shape, [&A, &B](PrimExpr i) {
     return A[i] + B[i];
   }, "C");
 
@@ -74,6 +75,7 @@ TEST(BuildModule, Heterogeneous) {
    */
 
   using namespace tvm;
+  using namespace tvm::te;
   const runtime::PackedFunc* pf = runtime::Registry::Get("module._Enabled");
   bool enabled = (*pf)("cuda");
   if (!enabled) {
@@ -87,18 +89,18 @@ TEST(BuildModule, Heterogeneous) {
 
   // The shape of input tensors.
   const int n = 4;
-  Array<Expr> shape{n};
+  Array<PrimExpr> shape{n};
 
-  auto A = placeholder(shape, Float(32), "A");
-  auto B = placeholder(shape, Float(32), "B");
-  auto C = placeholder(shape, Float(32), "C");
+  auto A = placeholder(shape, DataType::Float(32), "A");
+  auto B = placeholder(shape, DataType::Float(32), "B");
+  auto C = placeholder(shape, DataType::Float(32), "C");
 
-  auto elemwise_add = compute(A->shape, [&A, &B](Expr i) {
+  auto elemwise_add = compute(A->shape, [&A, &B](PrimExpr i) {
     return A[i] + B[i];
   }, "elemwise_add");
 
-  auto copy = placeholder(shape, Float(32), "__copy");
-  auto elemwise_sub = compute(C->shape, [&copy, &C](Expr i) {
+  auto copy = placeholder(shape, DataType::Float(32), "__copy");
+  auto elemwise_sub = compute(C->shape, [&copy, &C](PrimExpr i) {
     return copy[i] - C[i];
   }, "elemwise_sub");
 
