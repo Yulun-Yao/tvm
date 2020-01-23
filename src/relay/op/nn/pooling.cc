@@ -134,7 +134,10 @@ bool Pool2DRel(const Array<Type>& types,
     return false;
   }
 
-  std::vector<IndexExpr> oshape(dshape.begin(), dshape.end());
+  std::vector<IndexExpr> oshape;
+  for (const auto& e : dshape) {
+    oshape.push_back(e);
+  }
 
   if (dshape[hidx].as<tir::AnyNode>()) {
     oshape[hidx] = dshape[hidx];
@@ -772,7 +775,10 @@ bool Pool1DRel(const Array<Type>& types,
     return false;
   }
 
-  std::vector<IndexExpr> oshape(dshape.begin(), dshape.end());
+  std::vector<IndexExpr> oshape;
+  for (const auto& e : dshape) {
+    oshape.push_back(e);
+  }
 
   if (dshape[widx].as<tir::AnyNode>()) {
     oshape[widx] = dshape[widx];
@@ -960,9 +966,12 @@ bool Pool3DRel(const Array<Type>& types,
     return false;
   }
 
-  std::vector<IndexExpr> oshape(dshape.begin(), dshape.end());
+  std::vector<IndexExpr> oshape;
+  for (const auto& e : dshape) {
+    oshape.push_back(e);
+  }
 
-  int idxes[3] = {didx, hidx, widx};
+  std::vector<int> idxes = {didx, hidx, widx};
   for (int i = 0; i < 3; i++) {
     int ii = idxes[i];
     if (dshape[ii].as<tir::AnyNode>()) {
